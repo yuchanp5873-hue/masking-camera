@@ -206,7 +206,7 @@ $('startCamera').onclick=startCamera;$('capture').onclick=capture;$('stopCamera'
 $('fileInput').onchange=e=>{const f=e.target.files?.[0];if(!f)return;if(!f.type.startsWith('image/')){say('画像ファイルを選択してください。','error');return;}stopCamera();setImage(URL.createObjectURL(f));e.target.value='';};
 $('retake').onclick=()=>{original=null;autoMasks=[];manualMasks=[];previewConfirmed=false;canvas.style.display='none';video.style.display='block';placeholder.style.display=stream?'none':'block';updateButtons();say('画像を戻しました。撮影し直すか、別の画像を選択してください。');};
 $('drawMode').onclick=()=>{drawEnabled=!drawEnabled;$('drawMode').textContent='手動黒塗り：'+(drawEnabled?'ON':'OFF');say(drawEnabled?'画像上を指でなぞって黒塗り枠を追加してください。':'手動黒塗りをOFFにしました。黒塗り枠をタップすると解除確認ができます。');};
-$('undo').onclick=()=>{if(manualMasks.length){manualMasks.pop();previewConfirmed=false;}else if(autoMasks.length){autoMasks.pop();previewConfirmed=false;}redraw();updateButtons();say('最後に追加された黒塗り枠を取り消しました。');};
+$('undo').onclick=()=>{if(manualMasks.length){manualMasks.pop();previewConfirmed=false;redraw();updateButtons();say('最後に追加した手動の枠を取り消しました。');}else{say('取り消せる手動の枠はありません。自動検出の枠は、枠をタップして確認画面から解除してください。');}};
 $('clearManual').onclick=()=>{if(!manualMasks.length){say('手動で追加した枠はありません。');return;}if(confirm('手動で追加した黒塗り枠をすべて削除しますか？')){manualMasks=[];previewConfirmed=false;redraw();updateButtons();say('手動黒塗り枠を削除しました。');}};
 function isSensitiveLine(t){
  const s=t.replace(/\s/g,'').toLowerCase();
