@@ -1,24 +1,261 @@
 <!doctype html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>カメラテスト</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#17212b">
+<title>個人情報マスキングカメラ</title>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+:root{color-scheme:dark;--bg:#111820;--panel:#1d2935;--line:#344454;--blue:#1677d2;--green:#16834a;--red:#b93434}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:#f4f7fa;font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif}
+header{padding:13px 16px;background:#172633;border-bottom:1px solid var(--line)}
+h1{font-size:19px;margin:0 0 4px}header p{font-size:12px;color:#c5d0da;margin:0}
+main{max-width:760px;margin:auto;padding:12px;display:flex;flex-direction:column;gap:11px}
+.stage{height:min(57vh,560px);min-height:260px;background:#05080b;border:1px solid #40505e;border-radius:12px;overflow:hidden;display:flex;align-items:center;justify-content:center;position:relative}
+video,.workcanvas{width:100%;height:100%;object-fit:contain}
+.workcanvas{display:none;touch-action:none}
+.placeholder{color:#aab8c5;text-align:center;padding:20px;font-size:14px}
+.status{background:#263746;border-radius:9px;padding:10px 12px;font-size:13px;line-height:1.5;min-height:40px}
+.status.error{background:#4b2428;color:#ffe3e3}
+.status.ok{background:#173d2b;color:#d8ffe7}
+.group{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:11px}
+.group h2{font-size:14px;margin:0 0 9px;color:#dce8f2}
+.buttons{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+button,.filelabel{border:0;border-radius:9px;padding:12px 9px;font-size:14px;font-weight:700;color:white;background:var(--blue);min-height:44px;text-align:center;display:flex;align-items:center;justify-content:center;cursor:pointer}
+button.secondary,.filelabel.secondary{background:#46596b}
+button.green{background:var(--green)}
+button.danger{background:var(--red)}
+button:disabled{opacity:.45;cursor:not-allowed}
+input[type=file]{display:none}
+.note{font-size:12px;color:#c0ccd6;line-height:1.6;margin:8px 1px 0}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.row button{flex:1}
+dialog{width:min(92vw,480px);border:1px solid #536474;border-radius:13px;background:#202d39;color:#fff;padding:18px}
+dialog::backdrop{background:#000b}
+dialog h2{font-size:17px;margin:0 0 10px}
+dialog p{font-size:14px;line-height:1.6}
+.dialog-actions{display:flex;gap:8px;margin-top:15px}
+.dialog-actions button{flex:1}
+#previewImage{width:100%;max-height:55vh;object-fit:contain;background:#05080b;border-radius:8px}
+.small{font-size:11px;color:#aebdca}
+footer{font-size:11px;color:#9eacb8;line-height:1.6;padding:0 2px 18px}
+</style>
 </head>
 <body>
-<button id="b" type="button">カメラを起動</button>
-<p id="m">未実行</p>
-<video id="v" autoplay playsinline muted style="width:100%"></video>
+<header>
+  <h1>個人情報マスキングカメラ</h1>
+  <p>撮影・画像選択 → 自動検出 → 手動確認 → 黒塗り画像を保存</p>
+</header>
+<main>
+  <div class="stage" id="stage">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas" class="workcanvas"></canvas>
+    <div class="placeholder" id="placeholder">「カメラを起動」を押すか、端末内の画像を選択してください。</div>
+  </div>
+
+  <div class="status" id="status" role="status">待機中です。まず書類を撮影するか、画像を選択してください。</div>
+
+  <section class="group">
+    <h2>1. 撮影・画像の読み込み</h2>
+    <div class="buttons">
+      <button id="startCamera">カメラを起動</button>
+      <button id="capture" disabled>撮影して確認</button>
+      <label class="filelabel secondary" for="fileInput">端末内の画像を選択</label>
+      <input id="fileInput" type="file" accept="image/*">
+      <button id="stopCamera" class="secondary" disabled>カメラを停止</button>
+      <button id="retake" class="secondary" disabled>撮り直す・画像を戻す</button>
+    </div>
+    <p class="note">カメラ起動にはHTTPSで開いたページとカメラ権限が必要です。撮影した画像はこのページ内で処理します。</p>
+  </section>
+
+  <section class="group">
+    <h2>2. 自動検出・黒塗りの編集</h2>
+    <div class="buttons">
+      <button id="scan" disabled>OCRで自動検出</button>
+      <button id="drawMode" class="secondary" disabled>手動黒塗り：OFF</button>
+      <button id="undo" class="secondary" disabled>最後の枠を取り消す</button>
+      <button id="clearManual" class="secondary" disabled>手動枠を全て消す</button>
+    </div>
+    <p class="note">自動検出は、氏名・住所・電話番号・メールアドレス・郵便番号・職員番号などの手掛かりを含む行を黒塗り候補にします。検出漏れがあり得るため、画像全体を必ず目視確認してください。手動黒塗りをONにして画像上を指でなぞると四角形を追加できます。既存の黒塗り枠をタップすると、確認後に個別解除できます。</p>
+  </section>
+
+  <section class="group">
+    <h2>3. 最終確認・保存</h2>
+    <div class="buttons">
+      <button id="preview" class="green" disabled>保存前の最終確認</button>
+      <button id="save" disabled>黒塗り画像を保存</button>
+    </div>
+    <p class="note">保存されるのは黒塗りを画像に焼き付けたJPEGです。元画像はこの画面を開いている間だけメモリ上に保持します。ページを閉じると消えます。</p>
+  </section>
+
+  <footer>
+    <strong>重要：</strong>このアプリのOCRは個人情報を完全に見つけるものではありません。氏名などを誤認識したり、検出できないことがあります。個人情報を含む原本を外部サービスに送らないでください。OCRライブラリと日本語学習データの初回取得にはインターネット通信が発生します。画像そのものをOCR処理のためにサーバーへ送信する設計ではありませんが、機密文書での利用前に、架空データで十分に検証してください。
+  </footer>
+</main>
+
+<dialog id="confirmRemove">
+  <h2>黒塗りを解除しますか？</h2>
+  <p>この枠を解除すると、その部分の文字が見える状態になります。個人情報が含まれていないことを確認してください。</p>
+  <div class="dialog-actions">
+    <button id="cancelRemove" class="secondary">キャンセル</button>
+    <button id="doRemove" class="danger">解除する</button>
+  </div>
+</dialog>
+
+<dialog id="previewDialog">
+  <h2>保存前の最終確認</h2>
+  <img id="previewImage" alt="黒塗り済み画像のプレビュー">
+  <p>黒塗り漏れがないか、画像全体を確認してください。問題がなければ閉じて「黒塗り画像を保存」を押してください。</p>
+  <div class="dialog-actions"><button id="closePreview" class="green">確認して保存へ進む</button></div>
+</dialog>
+
 <script>
-document.getElementById("b").onclick = async () => {
-  try {
-    const s = await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
-    document.getElementById("v").srcObject = s;
-    document.getElementById("m").textContent = "成功";
-  } catch (e) {
-    document.getElementById("m").textContent = "失敗: " + e.name + " / " + e.message;
-  }
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+const video=$('video'), canvas=$('canvas'), ctx=canvas.getContext('2d',{willReadFrequently:true});
+const status=$('status'), placeholder=$('placeholder');
+let stream=null, original=null, autoMasks=[], manualMasks=[], drawEnabled=false, drag=null, pendingRemove=null, worker=null, busy=false, previewConfirmed=false;
+const allMasks=()=>autoMasks.concat(manualMasks);
+function say(message,type=''){status.textContent=message;status.className='status'+(type?' '+type:'');}
+function updateButtons(){
+ const has=!!original;
+ ['scan','drawMode','undo','clearManual','preview','retake'].forEach(id=>$(id).disabled=!has||busy); $('save').disabled=!has||busy||!previewConfirmed;
+ $('capture').disabled=!stream||busy;
+ $('startCamera').disabled=!!stream||busy;
+ $('stopCamera').disabled=!stream||busy;
+ $('drawMode').textContent='手動黒塗り：'+(drawEnabled?'ON':'OFF');
+}
+function stopCamera(){
+ if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+ video.srcObject=null; $('stopCamera').disabled=true; $('startCamera').disabled=false; $('capture').disabled=true;
+}
+async function startCamera(){
+ try{
+  if(!navigator.mediaDevices?.getUserMedia) throw new Error('このページではカメラを利用できません。HTTPSのページで開いてください。');
+  stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'}}});
+  video.srcObject=stream; await video.play();
+  placeholder.style.display='none'; say('カメラ起動中です。書類全体が画面に入るようにして撮影してください。','ok'); updateButtons();
+ }catch(e){say('カメラを起動できませんでした。HTTPS・カメラ権限を確認してください。'+(e.message?' ('+e.message+')':''),'error');stopCamera();}
+}
+function setImage(source){
+ const img=new Image();
+ img.onload=()=>{
+  if(img.naturalWidth>5000||img.naturalHeight>5000){say('画像が大きすぎます。5000ピクセル以下の画像を選んでください。','error');return;}
+  original=document.createElement('canvas'); original.width=img.naturalWidth; original.height=img.naturalHeight;
+  original.getContext('2d').drawImage(img,0,0);
+  canvas.width=original.width; canvas.height=original.height;
+  autoMasks=[];manualMasks=[];drawEnabled=false;previewConfirmed=false;
+  video.style.display='none';canvas.style.display='block';placeholder.style.display='none';
+  redraw(); updateButtons(); say('画像を読み込みました。OCRで自動検出するか、手動黒塗りを行ってください。','ok');
+ };
+ img.onerror=()=>say('画像を読み込めませんでした。別の画像を選んでください。','error');
+ img.src=source;
+}
+function capture(){
+ if(!stream||!video.videoWidth){say('カメラ映像の準備ができていません。','error');return;}
+ const snap=document.createElement('canvas');snap.width=video.videoWidth;snap.height=video.videoHeight;
+ snap.getContext('2d').drawImage(video,0,0);setImage(snap.toDataURL('image/jpeg',0.95));
+}
+function redraw(previewRect=null){
+ if(!original)return;
+ ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(original,0,0);
+ ctx.fillStyle='#000';
+ allMasks().forEach(r=>ctx.fillRect(r.x,r.y,r.w,r.h));
+ if(previewRect)ctx.fillRect(previewRect.x,previewRect.y,previewRect.w,previewRect.h);
+}
+function pointFromEvent(e){
+ const rect=canvas.getBoundingClientRect();
+ const scale=Math.min(rect.width/canvas.width,rect.height/canvas.height);
+ const shownW=canvas.width*scale,shownH=canvas.height*scale;
+ const left=rect.left+(rect.width-shownW)/2,top=rect.top+(rect.height-shownH)/2;
+ return {x:Math.max(0,Math.min(canvas.width,(e.clientX-left)/scale)),y:Math.max(0,Math.min(canvas.height,(e.clientY-top)/scale))};
+}
+function findMask(p){
+ const list=allMasks();
+ for(let i=list.length-1;i>=0;i--){const r=list[i];if(p.x>=r.x&&p.x<=r.x+r.w&&p.y>=r.y&&p.y<=r.y+r.h)return {r,auto:i<autoMasks.length,index:i<autoMasks.length?i:i-autoMasks.length};}
+ return null;
+}
+canvas.addEventListener('pointerdown',e=>{
+ if(!original||busy)return;
+ const p=pointFromEvent(e);
+ if(!drawEnabled){
+  const hit=findMask(p);
+  if(hit){pendingRemove=hit;$('confirmRemove').showModal();}
+  return;
+ }
+ e.preventDefault();canvas.setPointerCapture(e.pointerId);drag={x:p.x,y:p.y};redraw({x:p.x,y:p.y,w:0,h:0});
+});
+canvas.addEventListener('pointermove',e=>{
+ if(!drag||!drawEnabled)return;
+ const p=pointFromEvent(e);redraw({x:Math.min(drag.x,p.x),y:Math.min(drag.y,p.y),w:Math.abs(p.x-drag.x),h:Math.abs(p.y-drag.y)});
+});
+canvas.addEventListener('pointerup',e=>{
+ if(!drag)return;
+ const p=pointFromEvent(e),r={x:Math.min(drag.x,p.x),y:Math.min(drag.y,p.y),w:Math.abs(p.x-drag.x),h:Math.abs(p.y-drag.y)};
+ drag=null;if(r.w>=5&&r.h>=5){manualMasks.push(r);previewConfirmed=false;}redraw();updateButtons();
+});
+$('doRemove').onclick=()=>{
+ if(pendingRemove){if(pendingRemove.auto)autoMasks.splice(pendingRemove.index,1);else manualMasks.splice(pendingRemove.index,1);pendingRemove=null;previewConfirmed=false;redraw();updateButtons();say('選択した黒塗り枠を解除しました。必ず個人情報が見えていないか確認してください。','error');}
+ $('confirmRemove').close();
 };
+$('cancelRemove').onclick=()=>{$('confirmRemove').close();pendingRemove=null;};
+$('startCamera').onclick=startCamera;$('capture').onclick=capture;$('stopCamera').onclick=()=>{stopCamera();say('カメラを停止しました。','ok');};
+$('fileInput').onchange=e=>{const f=e.target.files?.[0];if(!f)return;if(!f.type.startsWith('image/')){say('画像ファイルを選択してください。','error');return;}stopCamera();setImage(URL.createObjectURL(f));e.target.value='';};
+$('retake').onclick=()=>{original=null;autoMasks=[];manualMasks=[];previewConfirmed=false;canvas.style.display='none';video.style.display='block';placeholder.style.display=stream?'none':'block';updateButtons();say('画像を戻しました。撮影し直すか、別の画像を選択してください。');};
+$('drawMode').onclick=()=>{drawEnabled=!drawEnabled;$('drawMode').textContent='手動黒塗り：'+(drawEnabled?'ON':'OFF');say(drawEnabled?'画像上を指でなぞって黒塗り枠を追加してください。':'手動黒塗りをOFFにしました。黒塗り枠をタップすると解除確認ができます。');};
+$('undo').onclick=()=>{if(manualMasks.length){manualMasks.pop();previewConfirmed=false;}else if(autoMasks.length){autoMasks.pop();previewConfirmed=false;}redraw();updateButtons();say('最後に追加された黒塗り枠を取り消しました。');};
+$('clearManual').onclick=()=>{if(!manualMasks.length){say('手動で追加した枠はありません。');return;}if(confirm('手動で追加した黒塗り枠をすべて削除しますか？')){manualMasks=[];previewConfirmed=false;redraw();updateButtons();say('手動黒塗り枠を削除しました。');}};
+function isSensitiveLine(t){
+ const s=t.replace(/\s/g,'').toLowerCase();
+ const labels=['氏名','名前','住所','現住所','電話','tel','携帯','郵便番号','〒','生年月日','年齢','職員番号','社員番号','個人番号','マイナンバー','メール','e-mail','email','口座番号','保険証','患者番号'];
+ const phone=/(?:0\d{1,4}[-ー－]?\d{1,4}[-ー－]?\d{3,4})/.test(s);
+ const postal=/〒?\d{3}[-ー－]?\d{4}/.test(s);
+ const email=/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i.test(t);
+ const id=/[a-z]{2,}[-ー－]?\d{3,}/i.test(t);
+ return labels.some(k=>s.includes(k))||phone||postal||email||id;
+}
+$('scan').onclick=async()=>{
+ if(!original||busy)return;
+ busy=true;updateButtons();say('OCRエンジンを準備しています。初回は日本語データの取得に時間がかかります。');
+ try{
+  if(!window.Tesseract)throw new Error('OCRライブラリを読み込めません。通信状態を確認してください。');
+  if(!worker)worker=await Tesseract.createWorker('jpn',1,{logger:m=>{if(m.status==='recognizing text')say('日本語を解析中… '+Math.round((m.progress||0)*100)+'%');}});
+  const result=await worker.recognize(original);
+  const lines=result.data.lines||[];
+  const found=[];
+  for(const line of lines){
+   if(!isSensitiveLine(line.text))continue;
+   const b=line.bbox,padX=Math.max(12,(b.x1-b.x0)*0.08),padY=Math.max(8,(b.y1-b.y0)*0.25);
+   found.push({x:Math.max(0,b.x0-padX),y:Math.max(0,b.y0-padY),w:Math.min(canvas.width,b.x1+padX)-Math.max(0,b.x0-padX),h:Math.min(canvas.height,b.y1+padY)-Math.max(0,b.y0-padY)});
+  }
+  autoMasks=found;previewConfirmed=false;redraw();
+  say('自動検出が終了しました。候補 '+found.length+' 件。検出漏れ・誤検出を必ず確認し、必要な箇所は手動で黒塗りしてください。','ok');
+ }catch(e){say('OCRに失敗しました。'+(e.message||''),'error');}
+ finally{busy=false;updateButtons();}
+};
+function makeOutput(){
+ const out=document.createElement('canvas');out.width=original.width;out.height=original.height;const c=out.getContext('2d');
+ c.drawImage(original,0,0);c.fillStyle='#000';allMasks().forEach(r=>c.fillRect(r.x,r.y,r.w,r.h));return out;
+}
+$('preview').onclick=()=>{if(!original)return;previewConfirmed=false;$('previewImage').src=makeOutput().toDataURL('image/jpeg',0.95);$('previewDialog').showModal();};
+$('closePreview').onclick=()=>{$('previewDialog').close();previewConfirmed=true;updateButtons();say('最終確認済みです。黒塗り画像を保存できます。','ok');};
+$('save').onclick=()=>{
+ if(!original)return;
+ const out=makeOutput();
+ out.toBlob(blob=>{
+  if(!blob){say('画像を作成できませんでした。','error');return;}
+  const url=URL.createObjectURL(blob),a=document.createElement('a');
+  a.href=url;a.download='masked_'+new Date().toISOString().replace(/[:.]/g,'-')+'.jpg';
+  document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
+  say('黒塗り画像の保存を開始しました。ダウンロード先で画像を開き、黒塗りが反映されていることを確認してください。','ok');
+ },'image/jpeg',0.95);
+};
+window.addEventListener('beforeunload',()=>{stopCamera();if(worker)worker.terminate();});
+updateButtons();
+})();
 </script>
 </body>
 </html>
