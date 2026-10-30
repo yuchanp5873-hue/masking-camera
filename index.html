@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>カメラテスト</title>
+</head>
+<body>
+<button id="b" type="button">カメラを起動</button>
+<p id="m">未実行</p>
+<video id="v" autoplay playsinline muted style="width:100%"></video>
+<script>
+document.getElementById("b").onclick = async () => {
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+    document.getElementById("v").srcObject = s;
+    document.getElementById("m").textContent = "成功";
+  } catch (e) {
+    document.getElementById("m").textContent = "失敗: " + e.name + " / " + e.message;
+  }
+};
+</script>
+</body>
+</html>
